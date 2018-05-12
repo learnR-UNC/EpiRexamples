@@ -6,6 +6,25 @@
 # Remarks:                                                                    
 ###############################################################################
 
+# TO DO 
+# can make this a lot cleaner by having a function that saves model object and does est and 95% CI for me 
+
+lazyglm <- function(...){
+  glmobj <- glm(...)
+  if(glmobj$family$link == "identity"){
+    est <- coef(glmobj)
+    confint <- confint.default(glmobj) # assuming asymptotic normality for ease of convergence
+  } else {
+    est <- exp(coef(glmobj))
+    confint <- exp(confint.default(glmobj)) # assuming asymptotic normality for ease of convergence
+  }
+  
+  sum <- round(cbind(est, confint),2)
+  
+  ret <- list(glmobj=glmobj, est=est, confint=confint, sum=sum)
+  return(ret)
+}
+
 ######################################## 
 #########      Imports      ############
 ########################################
@@ -92,14 +111,21 @@ df$dz[df$exp == 0 & df$m == 1] <- rbinom(sum(df$exp == 0 & df$m == 1),1, emm+p0)
 df$dz[df$exp == 1 & df$m == 0] <- rbinom(sum(df$exp == 1 & df$m == 0),1,p1)
 df$dz[df$exp == 0 & df$m == 0] <- rbinom(sum(df$exp == 0 & df$m == 0),1,p0)
 
-t <- prop.table(xtabs(~df$exp + df$dz + df$m), margin = 1)
+# crude table
+xtabs(~df$exp + df$dz)
+crude <- prop.table(xtabs(~df$exp + df$dz), margin = 1)
+crude[2,2] - crude[1,2]
+crude[2,2]/crude[1,2]
+# stratified table
+xtabs(~df$exp + df$dz + df$m)
+strata <- prop.table(xtabs(~df$exp + df$dz + df$m), margin = 1) # store for strata estimates
 # EMM on the Risk Difference Scale
-t[2,2,1] - t[1,2,1]
-t[2,2,2] - t[1,2,2]
+strata[2,2,1] - strata[1,2,1]
+strata[2,2,2] - strata[1,2,2]
 
 # EMM on the Risk Ratio Scale
-t[2,2,1] / t[1,2,1]
-t[2,2,2] / t[1,2,2]
+strata[2,2,1] / strata[1,2,1]
+strata[2,2,2] / strata[1,2,2]
 
 
 
@@ -133,6 +159,43 @@ mod6 <- glm(dz ~ exp + m + exp*m, data=df, family = binomial(link = "log"))
 summary(mod6) # account for EMM and look for departure from homogeneity with RD model
 round(cbind(exp(coef(mod6)), exp(exp(confint.default(mod6)))),2)
 lmtest::lrtest(mod6, mod5)
+
+rr1 <- contrast::contrast(mod6,
+         a=list(exp = 1, m=1),
+         b=list(exp = 0, m=1))
+rr0 <- contrast::contrast(mod6,
+                          a=list(exp = 1, m=0),
+                          b=list(exp = 0, m=0))
+
+
+
+num <- exp(rr1$Contrast)*(1/sum(df$m==1)) + exp(rr0$Contrast)*(1/sum(df$m==0)) 
+denom <- (1/sum(df$m==1)) + (1/sum(df$m==0))
+num/denom
+
+inverseprobweight <- as.data.frame(t(prop.table(table(df$m))), stringsAsFactors = F)
+inverseprobweight <- inverseprobweight %>%
+  dplyr::mutate(m=as.numeric(Var2), inverseprobweight=1/Freq) %>%
+  dplyr::select(m,inverseprobweight)
+
+dfw <- left_join(df, inverseprobweight, by=c("m"))
+
+mod7 <- glm(dz ~ exp + m + m*exp, data=dfw, family = quasipoisson(link = "log"),
+            weights = inverseprobweight)
+summary(mod7)
+round(cbind(exp(coef(mod7)), exp(exp(confint(mod7)))),2)
+rr1 <- contrast::contrast(mod7,
+                          a=list(exp = 1, m=1),
+                          b=list(exp = 0, m=1))
+rr0 <- contrast::contrast(mod7,
+                          a=list(exp = 1, m=0),
+                          b=list(exp = 0, m=0))
+
+
+
+
+
+
 
 
 # odds ratio scale
